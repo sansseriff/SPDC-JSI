@@ -126,6 +126,39 @@ class JointSpectrumParams:
     A: float
 
 
+@dataclass
+class DwdmTransSignal:
+    ch_35: float = 0.19136545  # these values are from a previous fit attempt. Starting with them speeds up the fit
+    ch_36: float = 0.17731157
+    ch_37: float = 0.17270252
+    ch_38: float = 0.17618667
+    ch_39: float = 0.15213450
+    ch_40: float = 0.17627453
+    ch_41: float = 0.13296563
+    ch_42: float = 0.15925184
+
+
+@dataclass
+class DwdmTransIdler:
+    ch_52: float = 0.20342922
+    ch_53: float = 0.18249992
+    ch_54: float = 0.19943218
+    ch_55: float = 0.17494457
+    ch_56: float = 0.17084803
+    ch_57: float = 0.16005438
+    ch_58: float = 0.16079229
+    ch_59: float = 0.16450624
+
+
+@dataclass
+class FilteredJointSpectrumParams:
+    detector: DetectorParams
+    spdc: SpdcParams
+    A: float
+    signal_filters: DwdmTransSignal
+    idler_filters: DwdmTransIdler
+
+
 ############ SPDC functions
 
 
