@@ -26,7 +26,7 @@ class ExtraordinaryIndex:
 
 
 @dataclass
-class ExtraordinaryIndex1Percent:
+class ExtraordinaryIndex1Percent(ExtraordinaryIndex):
     a1: float = 5.078
     a2: float = 0.0964
     a3: float = 0.2065
@@ -116,7 +116,7 @@ class SpdcParams:
     L: float
     gamma: float
     sellmeier_ordinary: OrdinaryIndex
-    sellmeier_extraordinary: Union[ExtraordinaryIndex1Percent, ExtraordinaryIndex]
+    sellmeier_extraordinary: ExtraordinaryIndex
 
 
 @dataclass
@@ -130,7 +130,7 @@ class JointSpectrumParams:
 
 
 class Dwdm:
-    def __init__(self, width_adj=1.0, gaussian=False):
+    def __init__(self, width_adj=1.0, gaussian=False, transmission=1.0):
         self.guass = gaussian
         self.width_adj = width_adj
         self.dwdm = np.array(
@@ -158,9 +158,10 @@ class Dwdm:
                 [1551.2, 0.0],
             ]
         )
-        self.norm = 0.65e-3  # GUESS. UNKNOWN acctually. I didnt' take this data
+        self.norm = np.max(self.dwdm[:, 1])
+        print(self.norm)
         self.dwdm_wl = self.dwdm[:, 0]
-        self.dwdm_t = self.dwdm[:, 1] / self.norm
+        self.dwdm_t = (self.dwdm[:, 1] / self.norm) * transmission
         if width_adj != 1:
             self.dwdm_wl = self.dwdm_wl * width_adj
         self.center_of_mass: float = (np.dot(self.dwdm_t, self.dwdm_wl)) / np.sum(
@@ -179,14 +180,29 @@ class Dwdm:
             return t_array
 
 
-def dwdm2D(x, y, x_0, y_0, width_adj=1.0, gaussian=False):
+def dwdm2D(x, y, x_0, y_0, x_trans=0.8, y_trans=0.8, width_adj=1.0, gaussian=False):
+    if x_0 == 0:
+        # if y_0 is nonzero and x_0 is zero, then apply just the y filter.
+        # Used for fitting to singles count rates
+        print("found zero x")
+        dwdm_y = Dwdm(width_adj=width_adj, gaussian=gaussian, transmission=y_trans)
+        return dwdm_y.from_array(y, y_0)
+
+    if y_0 == 0:
+        # if x_0 is nonzero and y_0 is zero, then apply just the x filter
+        # Used for fitting to singles count rates
+        print("found zero y")
+        dwdm_x = Dwdm(width_adj=width_adj, gaussian=gaussian, transmission=x_trans)
+        return dwdm_x.from_array(x, x_0)
+
     # take the x and put it through the filter. Find the transmission
     # take the y and put it thrugh the filter. Find the transmission.
-    dwdm_x = Dwdm(width_adj=width_adj, gaussian=gaussian)
-    dwdm_y = Dwdm(width_adj=width_adj, gaussian=gaussian)
+    dwdm_x = Dwdm(width_adj=width_adj, gaussian=gaussian, transmission=x_trans)
+    dwdm_y = Dwdm(width_adj=width_adj, gaussian=gaussian, transmission=y_trans)
+
     filtered_x = dwdm_x.from_array(x, x_0)
     filtered_y = dwdm_y.from_array(y, y_0)
-    return filtered_x * filtered_y  # np.outer(filtered_x, filtered_y)
+    return filtered_x * filtered_y
 
 
 def refractive_index_ppln(wavelength):
@@ -346,7 +362,10 @@ def lmfit_wrapper_join_spectrum(
 
 
 def create_signal_idler_arrays(
-    signal_pts: list[float] | np.ndarray, idler_pts: list[float] | np.ndarray, number_pts: int = 150, df=None
+    signal_pts: list[float] | np.ndarray,
+    idler_pts: list[float] | np.ndarray,
+    number_pts: int = 150,
+    df=None,
 ):
     if df is None:
         df = np.average(np.abs(np.diff(signal_pts)))
@@ -398,7 +417,138 @@ def lmfit_wrapper_join_spectrum_filter_integrate(
         X, Y = create_sub_mesh_grids(x_wl, y_wl, 15)
 
         filter_dwdm = dwdm2D(X, Y, x_wl, y_wl)
+        # prinfo(np.shape(filter_dwdm))
+
+        # prinfo(filter_dwdm)
+        # prinfo(np.sum(filter_dwdm))
         filter_dwdm = filter_dwdm / np.sum(filter_dwdm)  # normalize
+
+        # integrate the transmission through the filter over the sub grid
+        output[i] = np.sum(
+            filter_dwdm * joint_spectrum(X, Y, params.spdc.gamma, params.A, params)
+        )
+    return output
+
+
+def transmission_from_wavelength(wavelengths: list[float], transmissions: dict) -> list:
+    lookup_dict = {
+        1549.32: transmissions["35"],
+        1548.51: transmissions["36"],
+        1547.72: transmissions["37"],
+        1546.92: transmissions["38"],
+        1546.12: transmissions["39"],
+        1545.32: transmissions["40"],
+        1544.53: transmissions["41"],
+        1543.73: transmissions["42"],
+        1535.82: transmissions["52"],
+        1535.04: transmissions["53"],
+        1534.25: transmissions["54"],
+        1533.47: transmissions["55"],
+        1532.68: transmissions["56"],
+        1531.90: transmissions["57"],
+        1531.12: transmissions["58"],
+        1530.33: transmissions["59"],
+    }
+
+    output_trans = []
+    for wl in wavelengths:
+        if wl == 0.0:
+            output_trans.append(-1)
+            continue
+        try:
+            output_trans.append(lookup_dict[wl])
+        except KeyError:
+            print(f"Key {wl} not found in lookup dict")
+
+    return output_trans
+
+
+# [1530.33, 1531.12, 1531.9, 1532.68, 1533.47, 1534.25, 1535.04, 1535.82]
+
+
+def lmfit_wrapper_join_spectrum_filter_integrate_cs(
+    M,
+    # X,
+    # Y,
+    detector_sigma,
+    detector_w_0,
+    spdc_w_central,
+    spdc_sigma_p,
+    spdc_temp,
+    spdc_L,
+    spdc_gamma,
+    A,
+    signal_ch_35,
+    signal_ch_36,
+    signal_ch_37,
+    signal_ch_38,
+    signal_ch_39,
+    signal_ch_40,
+    signal_ch_41,
+    signal_ch_42,
+    idler_ch_52,
+    idler_ch_53,
+    idler_ch_54,
+    idler_ch_55,
+    idler_ch_56,
+    idler_ch_57,
+    idler_ch_58,
+    idler_ch_59,
+):
+    """
+    lmfit_wrapper_join_spectrum assumes the the dwdm filters are narroband enough that
+    they pick out singular points of the jsi. In fact, they are wide enough that it's
+    more accurate to think of the collected coincidence rates as from an integration of JSI
+    times the filter bandwidths. This updated fitting function applies that integration
+    """
+
+    detector_params = DetectorParams(sigma=detector_sigma, w_0=detector_w_0)
+    spdc_params = SpdcParams(
+        w_central=spdc_w_central,
+        sigma_p=spdc_sigma_p,
+        temp=spdc_temp,
+        L=spdc_L,
+        gamma=spdc_gamma,
+        sellmeier_ordinary=OrdinaryIndex(),
+        sellmeier_extraordinary=ExtraordinaryIndex1Percent(),
+    )
+    params = JointSpectrumParams(detector_params, spdc_params, A)
+    y, x = M[:, 0], M[:, 1]
+    # y array is signal, x array is idler
+
+    transmissions = {
+        "35": signal_ch_35,
+        "36": signal_ch_36,
+        "37": signal_ch_37,
+        "38": signal_ch_38,
+        "39": signal_ch_39,
+        "40": signal_ch_40,
+        "41": signal_ch_41,
+        "42": signal_ch_42,
+        "52": idler_ch_52,
+        "53": idler_ch_53,
+        "54": idler_ch_54,
+        "55": idler_ch_55,
+        "56": idler_ch_56,
+        "57": idler_ch_57,
+        "58": idler_ch_58,
+        "59": idler_ch_59,
+    }
+
+    y_transmissions = transmission_from_wavelength(y, transmissions)
+    x_transmissions = transmission_from_wavelength(x, transmissions)
+
+    print(transmissions)
+    print()
+
+    output = np.zeros(len(x), dtype=float)
+    for i, (x_wl, y_wl, x_trans, y_trans) in enumerate(
+        zip(x, y, x_transmissions, y_transmissions)
+    ):
+        X, Y = create_sub_mesh_grids(x_wl, y_wl, 30)
+
+        filter_dwdm = dwdm2D(X, Y, x_wl, y_wl, x_trans=x_trans, y_trans=y_trans)
+        # filter_dwdm = filter_dwdm / np.sum(filter_dwdm)  # normalize
 
         # integrate the transmission through the filter over the sub grid
         output[i] = np.sum(
@@ -420,15 +570,28 @@ def create_sub_mesh_grids(x_wl: float, y_wl: float, res: int, span: float = 0.8)
     Returns:
         _type_: X and Y mesh grids
     """
+    if x_wl != 0.0:
+        start_x_wl = x_wl - span
+        end_x_wl = x_wl + span
+        array_x_wl = np.linspace(start_x_wl, end_x_wl, res)
+    else:
+        # make extra long sub-grid in this dimension for single filter
+        start_x_wl = 1540 - 20
+        end_x_wl = 1540 + 20
+        array_x_wl = np.linspace(start_x_wl, end_x_wl, res)
 
-    start_x_wl = x_wl - span
-    end_x_wl = x_wl + span
-    array_x_wl = np.linspace(start_x_wl, end_x_wl, res)
+    if y_wl != 0.0:
+        start_y_wl = y_wl - span
+        end_y_wl = y_wl + span
+        array_y_wl = np.linspace(start_y_wl, end_y_wl, res)
+    else:
+        # make extra long sub-grid in this dimension for single filter
+        start_y_wl = 1540 - 20
+        end_y_wl = 1540 + 20
+        array_y_wl = np.linspace(start_y_wl, end_y_wl, res)
 
-    start_y_wl = y_wl - span
-    end_y_wl = y_wl + span
-    array_y_wl = np.linspace(start_y_wl, end_y_wl, res)
-
+    # print(array_x_wl)
+    # print(array_y_wl)
     X, Y = np.meshgrid(array_x_wl, array_y_wl)
     return X, Y
 
