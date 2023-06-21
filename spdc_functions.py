@@ -159,7 +159,7 @@ class Dwdm:
             ]
         )
         self.norm = np.max(self.dwdm[:, 1])
-        print(self.norm)
+        # print(self.norm)
         self.dwdm_wl = self.dwdm[:, 0]
         self.dwdm_t = (self.dwdm[:, 1] / self.norm) * transmission
         if width_adj != 1:
@@ -184,15 +184,17 @@ def dwdm2D(x, y, x_0, y_0, x_trans=0.8, y_trans=0.8, width_adj=1.0, gaussian=Fal
     if x_0 == 0:
         # if y_0 is nonzero and x_0 is zero, then apply just the y filter.
         # Used for fitting to singles count rates
-        print("found zero x")
+        # print("found zero x")
         dwdm_y = Dwdm(width_adj=width_adj, gaussian=gaussian, transmission=y_trans)
         return dwdm_y.from_array(y, y_0)
 
     if y_0 == 0:
         # if x_0 is nonzero and y_0 is zero, then apply just the x filter
         # Used for fitting to singles count rates
-        print("found zero y")
+        # print("found zero y")
         dwdm_x = Dwdm(width_adj=width_adj, gaussian=gaussian, transmission=x_trans)
+        # prinfo(np.max(dwdm_x.from_array(x, x_0)))
+        # prinfo(np.sum(dwdm_x.from_array(x, x_0)))
         return dwdm_x.from_array(x, x_0)
 
     # take the x and put it through the filter. Find the transmission
@@ -202,6 +204,10 @@ def dwdm2D(x, y, x_0, y_0, x_trans=0.8, y_trans=0.8, width_adj=1.0, gaussian=Fal
 
     filtered_x = dwdm_x.from_array(x, x_0)
     filtered_y = dwdm_y.from_array(y, y_0)
+
+    double_filter = filtered_x * filtered_y
+    # prinfo(np.max(double_filter))
+    # prinfo(np.sum(double_filter))
     return filtered_x * filtered_y
 
 
@@ -421,7 +427,8 @@ def lmfit_wrapper_join_spectrum_filter_integrate(
 
         # prinfo(filter_dwdm)
         # prinfo(np.sum(filter_dwdm))
-        filter_dwdm = filter_dwdm / np.sum(filter_dwdm)  # normalize
+        # filter_dwdm = filter_dwdm / np.sum(filter_dwdm)  # normalize
+        # print(np.sum(filter_dwdm))
 
         # integrate the transmission through the filter over the sub grid
         output[i] = np.sum(
@@ -538,8 +545,8 @@ def lmfit_wrapper_join_spectrum_filter_integrate_cs(
     y_transmissions = transmission_from_wavelength(y, transmissions)
     x_transmissions = transmission_from_wavelength(x, transmissions)
 
-    print(transmissions)
-    print()
+    # print(transmissions)
+    # print()
 
     output = np.zeros(len(x), dtype=float)
     for i, (x_wl, y_wl, x_trans, y_trans) in enumerate(
@@ -548,11 +555,22 @@ def lmfit_wrapper_join_spectrum_filter_integrate_cs(
         X, Y = create_sub_mesh_grids(x_wl, y_wl, 30)
 
         filter_dwdm = dwdm2D(X, Y, x_wl, y_wl, x_trans=x_trans, y_trans=y_trans)
+
+        # prinfo(X[0])
+        # prinfo(Y[0])
+        dx = (X[0, -1] - X[0, 0]) / len(X)
+        dy = (Y[-1, 0] - Y[0, 0]) / len(Y)
+        # prinfo(dx)
+        # prinfo(dy)
         # filter_dwdm = filter_dwdm / np.sum(filter_dwdm)  # normalize
 
         # integrate the transmission through the filter over the sub grid
-        output[i] = np.sum(
-            filter_dwdm * joint_spectrum(X, Y, params.spdc.gamma, params.A, params)
+        output[i] = (
+            dx
+            * dy
+            * np.sum(
+                filter_dwdm * joint_spectrum(X, Y, params.spdc.gamma, params.A, params)
+            )
         )
     return output
 
