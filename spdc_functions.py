@@ -6,13 +6,23 @@ from scipy.special import erf
 from typing import Union
 
 from snsphd.help import prinfo
+from pydantic import BaseModel
+
+import json
+
+from lmfit import Model
+
+from lmfit.model import ModelResult
+
+from lmfit.model import save_modelresult, load_modelresult
+
+import os
 
 
 ########### Refractive Index Functions
 
 
-@dataclass
-class ExtraordinaryIndex:
+class ExtraordinaryIndex(BaseModel):
     a1: float = 5.756
     a2: float = 0.0983
     a3: float = 0.2020
@@ -25,7 +35,6 @@ class ExtraordinaryIndex:
     b4: float = 1.516e-4
 
 
-@dataclass
 class ExtraordinaryIndex1Percent(ExtraordinaryIndex):
     a1: float = 5.078
     a2: float = 0.0964
@@ -39,8 +48,7 @@ class ExtraordinaryIndex1Percent(ExtraordinaryIndex):
     b4: float = 1.096e-4
 
 
-@dataclass
-class OrdinaryIndex:
+class OrdinaryIndex(BaseModel):
     a1: float = 5.653
     a2: float = 0.1185
     a3: float = 0.2091
@@ -51,6 +59,72 @@ class OrdinaryIndex:
     b2: float = 3.134e-8
     b3: float = -4.641e-9
     b4: float = -2.188e-6
+
+
+class DetectorParams(BaseModel):
+    sigma: float
+    w_0: float
+
+
+class SpdcParams(BaseModel):
+    w_central: float
+    sigma_p: float
+    temp: float
+    L: float
+    gamma: float
+    sellmeier_ordinary: OrdinaryIndex
+    sellmeier_extraordinary: ExtraordinaryIndex
+
+
+class JointSpectrumParams(BaseModel):
+    detector: DetectorParams
+    spdc: SpdcParams
+    A: float
+
+
+class DwdmTransSignal(BaseModel):
+    ch_35: float = 0.1  # 0.19136545
+    ch_36: float = 0.1  # 0.17731157
+    ch_37: float = 0.1  # 0.17270252
+    ch_38: float = 0.1  # 0.17618667
+    ch_39: float = 0.1  # 0.15213450
+    ch_40: float = 0.1  # 0.17627453
+    ch_41: float = 0.1  # 0.13296563
+    ch_42: float = 0.1  # 0.15925184
+
+    ch_35_wl: float = 1549.32
+    ch_36_wl: float = 1548.51
+    ch_37_wl: float = 1547.72
+    ch_38_wl: float = 1546.92
+    ch_39_wl: float = 1546.12
+    ch_40_wl: float = 1545.32
+    ch_41_wl: float = 1544.53
+    ch_42_wl: float = 1543.73
+
+
+class DwdmTransIdler(BaseModel):
+    ch_52: float = 0.1  # 0.20342922
+    ch_53: float = 0.1  # 0.18249992
+    ch_54: float = 0.1  # 0.19943218
+    ch_55: float = 0.1  # 0.17494457
+    ch_56: float = 0.1  # 0.17084803
+    ch_57: float = 0.1  # 0.16005438
+    ch_58: float = 0.1  # 0.16079229
+    ch_59: float = 0.1  # 0.16450624
+
+    ch_52_wl: float = 1535.82
+    ch_53_wl: float = 1535.04
+    ch_54_wl: float = 1534.25
+    ch_55_wl: float = 1533.47
+    ch_56_wl: float = 1532.68
+    ch_57_wl: float = 1531.90
+    ch_58_wl: float = 1531.12
+    ch_59_wl: float = 1530.33
+
+
+class FilteredJointSpectrumParams(JointSpectrumParams):
+    signal_filters: DwdmTransSignal
+    idler_filters: DwdmTransIdler
 
 
 def Mgo_doped_Linb03_calculate_indexes(
@@ -100,63 +174,6 @@ def Linb03_calculate_indexes(lambda_: float, temp_: float):
     nz = nz + (temp_ - 20.0) * dnz
 
     return nx
-
-
-@dataclass
-class DetectorParams:
-    sigma: float
-    w_0: float
-
-
-@dataclass
-class SpdcParams:
-    w_central: float
-    sigma_p: float
-    temp: float
-    L: float
-    gamma: float
-    sellmeier_ordinary: OrdinaryIndex
-    sellmeier_extraordinary: ExtraordinaryIndex
-
-
-@dataclass
-class JointSpectrumParams:
-    detector: DetectorParams
-    spdc: SpdcParams
-    A: float
-
-
-@dataclass
-class DwdmTransSignal:
-    ch_35: float = 0.19136545  # these values are from a previous fit attempt. Starting with them speeds up the fit
-    ch_36: float = 0.17731157
-    ch_37: float = 0.17270252
-    ch_38: float = 0.17618667
-    ch_39: float = 0.15213450
-    ch_40: float = 0.17627453
-    ch_41: float = 0.13296563
-    ch_42: float = 0.15925184
-
-
-@dataclass
-class DwdmTransIdler:
-    ch_52: float = 0.20342922
-    ch_53: float = 0.18249992
-    ch_54: float = 0.19943218
-    ch_55: float = 0.17494457
-    ch_56: float = 0.17084803
-    ch_57: float = 0.16005438
-    ch_58: float = 0.16079229
-    ch_59: float = 0.16450624
-
-
-@dataclass
-class FilteredJointSpectrumParams:
-    detector: DetectorParams
-    spdc: SpdcParams
-    A: float
-    signal_filters: DwdmTransSignal
-    idler_filters: DwdmTransIdler
 
 
 ############ SPDC functions
@@ -213,7 +230,7 @@ class Dwdm:
             return t_array
 
 
-def dwdm2D(x, y, x_0, y_0, x_trans=0.8, y_trans=0.8, width_adj=1.0, gaussian=False):
+def dwdm2D(x, y, x_0, y_0, x_trans=1, y_trans=1, width_adj=1.0, gaussian=False):
     if x_0 == 0:
         # if y_0 is nonzero and x_0 is zero, then apply just the y filter.
         # Used for fitting to singles count rates
@@ -353,8 +370,13 @@ def wl_pump_envelope(w_idler, w_signal, params: SpdcParams):
     return pump_envelope(omega_i, omega_s, omega_0, params.sigma_p)
 
 
-def joint_spectrum(w_idler, w_signal, gamma, A, params: JointSpectrumParams):
-    out = A * detector_profile(w_idler, w_signal, params.detector)
+def joint_spectrum(
+    w_idler, w_signal, gamma, A, params: JointSpectrumParams, enable_detector=True
+):
+    if enable_detector:
+        out = A * detector_profile(w_idler, w_signal, params.detector)
+    else:
+        out = A
     out *= spdc_profile(w_idler, w_signal, gamma, params.spdc)
     return out
 
@@ -395,7 +417,8 @@ def lmfit_wrapper_join_spectrum(
         sellmeier_ordinary=OrdinaryIndex(),
         sellmeier_extraordinary=ExtraordinaryIndex1Percent(),
     )
-    params = JointSpectrumParams(detector_params, spdc_params, A)
+    params = JointSpectrumParams(detector=detector_params, spdc=spdc_params, A=A)
+    # params = JointSpectrumParams(detector_params, spdc_params, A)
     x, y = M[:, 0], M[:, 1]
     return joint_spectrum(x, y, params.spdc.gamma, params.A, params)
 
@@ -448,7 +471,7 @@ def lmfit_wrapper_join_spectrum_filter_integrate(
         sellmeier_ordinary=OrdinaryIndex(),
         sellmeier_extraordinary=ExtraordinaryIndex1Percent(),
     )
-    params = JointSpectrumParams(detector_params, spdc_params, A)
+    params = JointSpectrumParams(detector=detector_params, spdc=spdc_params, A=A)
     y, x = M[:, 0], M[:, 1]
 
     output = np.zeros(len(x), dtype=float)
@@ -470,33 +493,53 @@ def lmfit_wrapper_join_spectrum_filter_integrate(
     return output
 
 
-def transmission_from_wavelength(wavelengths: list[float], transmissions: dict) -> list:
-    lookup_dict = {
-        1549.32: transmissions["35"],
-        1548.51: transmissions["36"],
-        1547.72: transmissions["37"],
-        1546.92: transmissions["38"],
-        1546.12: transmissions["39"],
-        1545.32: transmissions["40"],
-        1544.53: transmissions["41"],
-        1543.73: transmissions["42"],
-        1535.82: transmissions["52"],
-        1535.04: transmissions["53"],
-        1534.25: transmissions["54"],
-        1533.47: transmissions["55"],
-        1532.68: transmissions["56"],
-        1531.90: transmissions["57"],
-        1531.12: transmissions["58"],
-        1530.33: transmissions["59"],
-    }
+filter_lookup = {
+    1549.32: "35",
+    1548.51: "36",
+    1547.72: "37",
+    1546.92: "38",
+    1546.12: "39",
+    1545.32: "40",
+    1544.53: "41",
+    1543.73: "42",
+    1535.82: "52",
+    1535.04: "53",
+    1534.25: "54",
+    1533.47: "55",
+    1532.68: "56",
+    1531.90: "57",
+    1531.12: "58",
+    1530.33: "59",
+}
 
+
+def transmission_from_wavelength(wavelengths: list[float], transmissions: dict) -> list:
+    # lookup_dict = {
+    #     1549.32: transmissions["35"],
+    #     1548.51: transmissions["36"],
+    #     1547.72: transmissions["37"],
+    #     1546.92: transmissions["38"],
+    #     1546.12: transmissions["39"],
+    #     1545.32: transmissions["40"],
+    #     1544.53: transmissions["41"],
+    #     1543.73: transmissions["42"],
+    #     1535.82: transmissions["52"],
+    #     1535.04: transmissions["53"],
+    #     1534.25: transmissions["54"],
+    #     1533.47: transmissions["55"],
+    #     1532.68: transmissions["56"],
+    #     1531.90: transmissions["57"],
+    #     1531.12: transmissions["58"],
+    #     1530.33: transmissions["59"],
+    # }
     output_trans = []
     for wl in wavelengths:
         if wl == 0.0:
             output_trans.append(-1)
             continue
         try:
-            output_trans.append(lookup_dict[wl])
+            # output_trans.append(lookup_dict[wl])
+            output_trans.append(transmissions[filter_lookup[wl]])
         except KeyError:
             print(f"Key {wl} not found in lookup dict")
 
@@ -552,7 +595,7 @@ def lmfit_wrapper_join_spectrum_filter_integrate_cs(
         sellmeier_ordinary=OrdinaryIndex(),
         sellmeier_extraordinary=ExtraordinaryIndex1Percent(),
     )
-    params = JointSpectrumParams(detector_params, spdc_params, A)
+    params = JointSpectrumParams(detector=detector_params, spdc=spdc_params, A=A)
     y, x = M[:, 0], M[:, 1]
     # y array is signal, x array is idler
 
@@ -602,10 +645,67 @@ def lmfit_wrapper_join_spectrum_filter_integrate_cs(
             dx
             * dy
             * np.sum(
-                filter_dwdm * joint_spectrum(X, Y, params.spdc.gamma, params.A, params)
+                filter_dwdm
+                * joint_spectrum(
+                    X, Y, params.spdc.gamma, params.A, params, enable_detector=False
+                )
             )
         )
     return output
+
+
+@dataclass
+class Filter:
+    def __init__(self, center: float, transmission: float):
+        self.center = center
+        self.transmission = transmission
+        if self.center in filter_lookup:
+            self.channel = filter_lookup[self.center]
+
+    @classmethod
+    def from_channel(cls, channel: str, transmission: float):
+        inv_map = {v: k for k, v in filter_lookup.items()}
+        center = inv_map[channel]
+        return cls(center, transmission)
+
+
+def evaluate_model(
+    params,
+    filter_wl_x,
+    filter_wl_y,
+    filter_trans_x,
+    filter_trans_y,
+    enable_detector=True,
+):
+    """evaluate the joint spectrum at a given filter wavelength
+
+    Args:
+        params (JointSpectrumParams): joint spectrum parameters
+        filter_wl_x (float): x filter wavelength
+        filter_wl_y (float): y filter wavelength
+
+    Returns:
+        float: joint spectrum value
+    """
+    X, Y = create_sub_mesh_grids(filter_wl_x, filter_wl_y, 30)
+    dx = (X[0, -1] - X[0, 0]) / len(X)
+    dy = (Y[-1, 0] - Y[0, 0]) / len(Y)
+    filter_dwdm = dwdm2D(X, Y, filter_wl_x, filter_wl_y, filter_trans_x, filter_trans_y)
+    return (
+        dx
+        * dy
+        * np.sum(
+            filter_dwdm
+            * joint_spectrum(
+                X,
+                Y,
+                params.spdc.gamma,
+                params.A,
+                params,
+                enable_detector=enable_detector,
+            )
+        )
+    )
 
 
 def create_sub_mesh_grids(x_wl: float, y_wl: float, res: int, span: float = 0.8):
@@ -645,6 +745,171 @@ def create_sub_mesh_grids(x_wl: float, y_wl: float, res: int, span: float = 0.8)
     # print(array_y_wl)
     X, Y = np.meshgrid(array_x_wl, array_y_wl)
     return X, Y
+
+
+def run_lmfit_filter(
+    params: JointSpectrumParams,
+    data3d_new: np.ndarray,
+    load_prior_fit: bool = False,
+    file_name="filter_fit_params.json",
+    method: str = "powell",
+) -> tuple[ModelResult, FilteredJointSpectrumParams]:
+    if load_prior_fit and os.path.exists(file_name[:-5] + ".sav"):
+        result = load_modelresult(
+            file_name[:-5] + ".sav",
+            {
+                "lmfit_wrapper_join_spectrum_filter_integrate_cs": lmfit_wrapper_join_spectrum_filter_integrate_cs
+            },
+        )
+        print("finished results and fit model from files")
+        return result, load_model_from_json(file_name)
+
+    else:
+        print("starting fit")
+        mod = Model(lmfit_wrapper_join_spectrum_filter_integrate_cs)
+        lmfit_params_fi = mod.make_params(
+            detector_sigma=dict(value=params.detector.sigma, vary=False),
+            detector_w_0=dict(value=params.detector.w_0, vary=False),
+            spdc_w_central=dict(
+                value=params.spdc.w_central, vary=False, min=1539.2, max=1539.9
+            ),
+            spdc_sigma_p=dict(value=params.spdc.sigma_p, vary=False),
+            spdc_temp=dict(value=params.spdc.temp, vary=True, min=127, max=131),
+            spdc_L=dict(value=params.spdc.L, vary=False, min=1e3, max=2e7),
+            spdc_gamma=dict(
+                value=params.spdc.gamma, vary=False, min=1 / 18400, max=1 / 18200
+            ),
+            A=dict(value=params.A, vary=True, min=1000, max=1e15),
+            signal_ch_35=dict(
+                value=DwdmTransSignal().ch_35, vary=True, min=0.05, max=1.0
+            ),
+            signal_ch_36=dict(
+                value=DwdmTransSignal().ch_36, vary=True, min=0.05, max=1.0
+            ),
+            signal_ch_37=dict(
+                value=DwdmTransSignal().ch_37, vary=True, min=0.05, max=1.0
+            ),
+            signal_ch_38=dict(
+                value=DwdmTransSignal().ch_38, vary=True, min=0.05, max=1.0
+            ),
+            signal_ch_39=dict(
+                value=DwdmTransSignal().ch_39, vary=True, min=0.05, max=1.0
+            ),
+            signal_ch_40=dict(
+                value=DwdmTransSignal().ch_40, vary=True, min=0.05, max=1.0
+            ),
+            signal_ch_41=dict(
+                value=DwdmTransSignal().ch_41, vary=True, min=0.05, max=1.0
+            ),
+            signal_ch_42=dict(
+                value=DwdmTransSignal().ch_42, vary=True, min=0.05, max=1.0
+            ),
+            idler_ch_52=dict(
+                value=DwdmTransIdler().ch_52, vary=True, min=0.05, max=1.0
+            ),
+            idler_ch_53=dict(
+                value=DwdmTransIdler().ch_53, vary=True, min=0.05, max=1.0
+            ),
+            idler_ch_54=dict(
+                value=DwdmTransIdler().ch_54, vary=True, min=0.05, max=1.0
+            ),
+            idler_ch_55=dict(
+                value=DwdmTransIdler().ch_55, vary=True, min=0.05, max=1.0
+            ),
+            idler_ch_56=dict(
+                value=DwdmTransIdler().ch_56, vary=True, min=0.05, max=1.0
+            ),
+            idler_ch_57=dict(
+                value=DwdmTransIdler().ch_57, vary=True, min=0.05, max=1.0
+            ),
+            idler_ch_58=dict(
+                value=DwdmTransIdler().ch_58, vary=True, min=0.05, max=1.0
+            ),
+            idler_ch_59=dict(
+                value=DwdmTransIdler().ch_59, vary=True, min=0.05, max=1.0
+            ),
+        )
+
+        #    A=dict(value=1e6, vary=True, min=1, max=2e10),
+        independent_data = data3d_new[:, :2]
+        dependent_data = data3d_new[:, 2]
+
+        result: ModelResult = mod.fit(
+            dependent_data, lmfit_params_fi, M=independent_data, method=method
+        )
+        # mod.independent_vars
+
+        save_modelresult(
+            result, file_name[:-5] + ".sav"
+        )  # this is the lmfit model, no a pydantic model
+
+        # return result
+        model = load_filter_result_into_model(result)
+        save_model_to_json(model, file_name)
+        return result, model
+
+
+def load_filter_result_into_model(result):
+    detector_params = DetectorParams(
+        sigma=result.best_values["detector_sigma"],
+        w_0=result.best_values["detector_w_0"],
+    )
+    spdc_params = SpdcParams(
+        w_central=result.best_values["spdc_w_central"],
+        sigma_p=result.best_values["spdc_sigma_p"],
+        temp=result.best_values["spdc_temp"],
+        L=result.best_values["spdc_L"],
+        gamma=result.best_values["spdc_gamma"],
+        sellmeier_ordinary=OrdinaryIndex(),
+        sellmeier_extraordinary=ExtraordinaryIndex1Percent(),
+    )
+
+    dwdm_signal = DwdmTransSignal(
+        ch_35=result.best_values["signal_ch_35"],
+        ch_36=result.best_values["signal_ch_36"],
+        ch_37=result.best_values["signal_ch_37"],
+        ch_38=result.best_values["signal_ch_38"],
+        ch_39=result.best_values["signal_ch_39"],
+        ch_40=result.best_values["signal_ch_40"],
+        ch_41=result.best_values["signal_ch_41"],
+        ch_42=result.best_values["signal_ch_42"],
+    )
+
+    dwdm_idler = DwdmTransIdler(
+        ch_52=result.best_values["idler_ch_52"],
+        ch_53=result.best_values["idler_ch_53"],
+        ch_54=result.best_values["idler_ch_54"],
+        ch_55=result.best_values["idler_ch_55"],
+        ch_56=result.best_values["idler_ch_56"],
+        ch_57=result.best_values["idler_ch_57"],
+        ch_58=result.best_values["idler_ch_58"],
+        ch_59=result.best_values["idler_ch_59"],
+    )
+
+    fit_params = FilteredJointSpectrumParams(
+        detector=detector_params,
+        spdc=spdc_params,
+        A=result.best_values["A"],
+        signal_filters=dwdm_signal,
+        idler_filters=dwdm_idler,
+    )
+    return fit_params
+
+
+def save_model_to_json(
+    result_model: BaseModel, save_name: str = "filter_fit_params.json"
+):
+    with open(save_name, "w") as f:
+        json.dump(result_model.dict(), f)
+
+
+def load_model_from_json(
+    load_name: str = "filter_fit_params.json",
+) -> FilteredJointSpectrumParams:
+    with open(load_name, "r") as f:
+        data = json.load(f)
+
+    return FilteredJointSpectrumParams(**data)
 
 
 @dataclass
